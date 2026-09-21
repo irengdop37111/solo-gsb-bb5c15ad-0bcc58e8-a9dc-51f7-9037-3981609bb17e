@@ -237,6 +237,75 @@ button.ghost:disabled {
   bottom: 0;
 }
 
+/* ------------------------------ 采购报价组合 ------------------------------ */
+
+.summary .chip.quote-ok {
+  background: #e3f7f4;
+  color: #0f766e;
+  font-weight: 600;
+}
+
+.summary .chip.quote-fail {
+  background: #fde8e8;
+  color: #c92a2a;
+  font-weight: 600;
+}
+
+.quote-subfield {
+  margin-left: 20px;
+}
+
+.quote-editor {
+  border: 1px dashed #c4ccd9;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin: 4px 0 8px 20px;
+  background: #fcfdfe;
+}
+
+.quote-editor-head,
+.quote-row {
+  display: grid;
+  grid-template-columns: 1.4fr 0.9fr 1fr 0.8fr 0.8fr auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.quote-editor-head {
+  font-size: 12px;
+  color: #5a6b85;
+  padding: 0 2px 6px;
+}
+
+.quote-row {
+  margin-bottom: 8px;
+}
+
+.quote-row input {
+  width: 100%;
+}
+
+.quote-gap {
+  border: 1px solid #f1b0b0;
+  background: #fde8e8;
+  color: #a61b1b;
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin: 8px 0;
+  font-weight: 600;
+}
+
+.quote-row-zero td {
+  color: #9aa5b8;
+}
+
+#quoteTable tfoot td {
+  background: #f4f6fa;
+  font-weight: 600;
+  position: sticky;
+  bottom: 0;
+}
+
 .slot-fit {
   margin-top: 2px;
   font-size: 12px;

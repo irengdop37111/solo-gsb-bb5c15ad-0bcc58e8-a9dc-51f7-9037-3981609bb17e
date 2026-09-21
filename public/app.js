@@ -39,6 +39,20 @@ const prepSummary = document.getElementById('prepSummary');
 const prepFormula = document.getElementById('prepFormula');
 const prepTableBody = document.querySelector('#prepTable tbody');
 const prepTableFoot = document.querySelector('#prepTable tfoot');
+const purchaseQuotesBox = document.getElementById('purchaseQuotesEnabled');
+const quoteManualDemandBox = document.getElementById('quoteManualDemand');
+const quoteDemandInput = document.getElementById('quoteDemandSheets');
+const quoteEditor = document.getElementById('quoteEditor');
+const quoteRowsBox = document.getElementById('quoteRows');
+const addQuoteBtn = document.getElementById('addQuoteBtn');
+const quoteCountHint = document.getElementById('quoteCountHint');
+const purchaseQuoteCard = document.getElementById('purchaseQuoteCard');
+const quoteFormula = document.getElementById('quoteFormula');
+const quoteGapBox = document.getElementById('quoteGap');
+const quoteSummary = document.getElementById('quoteSummary');
+const quoteTableBody = document.querySelector('#quoteTable tbody');
+const quoteTableFoot = document.querySelector('#quoteTable tfoot');
+const MAX_QUOTE_ROWS = 8;
 const obsForm = document.getElementById('obsForm');
 const obsSignature = document.getElementById('obsSignature');
 const obsSheet = document.getElementById('obsSheet');
@@ -85,6 +99,127 @@ materialPrepBox.addEventListener('change', () => {
 [prepCopiesInput, prepMakereadyInput, prepWasteRateInput, prepSheetsPerPackInput].forEach((el) => {
   el.disabled = true;
 });
+
+/* ------------------------------ 采购报价组合 ------------------------------ */
+
+/** 渲染一条报价录入行（字段顺序即录入顺序，服务端按此序号做第 4 级排序）。 */
+function addQuoteRow(initial) {
+  const row = document.createElement('div');
+  row.className = 'quote-row';
+  const values = initial || { supplier: '', sheetsPerPack: '', price: '', minPacks: 0, maxPacks: '' };
+  row.innerHTML = `
+    <input class="q-supplier" type="text" maxlength="50" placeholder="如 华泰纸行" value="${escapeAttr(values.supplier)}">
+    <input class="q-sheets" type="number" min="1" max="100000000" step="1" placeholder="如 500" value="${escapeAttr(values.sheetsPerPack)}">
+    <input class="q-price" type="number" min="0" step="0.01" placeholder="如 123.45" value="${escapeAttr(values.price)}">
+    <input class="q-min" type="number" min="0" max="100000" step="1" placeholder="0" value="${escapeAttr(values.minPacks)}">
+    <input class="q-max" type="number" min="1" max="100000" step="1" placeholder="如 20" value="${escapeAttr(values.maxPacks)}">
+    <button type="button" class="ghost small-btn q-del">删除</button>
+  `;
+  row.querySelector('.q-del').addEventListener('click', () => {
+    row.remove();
+    updateQuoteCountHint();
+  });
+  quoteRowsBox.appendChild(row);
+  updateQuoteCountHint();
+}
+
+/** 属性值转义，避免回填值破坏 HTML。 */
+function escapeAttr(v) {
+  return String(v ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+}
+
+function updateQuoteCountHint() {
+  quoteCountHint.textContent = `已录入 ${quoteRowsBox.children.length} / ${MAX_QUOTE_ROWS} 条`;
+  addQuoteBtn.disabled = quoteRowsBox.children.length >= MAX_QUOTE_ROWS;
+}
+
+addQuoteBtn.addEventListener('click', () => addQuoteRow());
+
+/**
+ * 把「元」价格字符串精确换算为整数分：仅允许最多两位小数，全程字符串 / 整数运算，
+ * 不经过浮点（禁止 parseFloat('123.45') * 100 这类比较）。非法时返回 null。
+ */
+function yuanToCents(raw) {
+  const s = String(raw).trim();
+  if (!/^\d+(\.\d{1,2})?$/.test(s)) return null;
+  const dot = s.indexOf('.');
+  if (dot < 0) return Number(s) * 100;
+  const yuan = s.slice(0, dot);
+  const frac = (s.slice(dot + 1) + '00').slice(0, 2);
+  return Number(yuan) * 100 + Number(frac);
+}
+
+/** 收集并校验报价录入；返回 { quotes, demandSheets } 或抛出带明确信息的 Error。 */
+function collectPurchaseQuotes() {
+  const rows = [...quoteRowsBox.querySelectorAll('.quote-row')];
+  if (rows.length === 0) {
+    throw new Error('采购报价组合至少录入 1 条报价');
+  }
+  if (rows.length > MAX_QUOTE_ROWS) {
+    throw new Error(`采购报价最多录入 ${MAX_QUOTE_ROWS} 条`);
+  }
+  const quotes = [];
+  const names = new Set();
+  rows.forEach((row, i) => {
+    const where = `第 ${i + 1} 条报价`;
+    const supplier = row.querySelector('.q-supplier').value.trim();
+    if (!supplier) throw new Error(`${where}：供应商名称不能为空`);
+    if (names.has(supplier)) throw new Error(`${where}：供应商名称与前面重复（「${supplier}」）`);
+    names.add(supplier);
+    const sheetsPerPack = Number(row.querySelector('.q-sheets').value);
+    if (!Number.isInteger(sheetsPerPack) || sheetsPerPack < 1) {
+      throw new Error(`${where}（${supplier}）：每包张数必须为 ≥ 1 的整数`);
+    }
+    const priceCents = yuanToCents(row.querySelector('.q-price').value);
+    if (priceCents === null) {
+      throw new Error(`${where}（${supplier}）：每包价格必须为 ≥ 0 的数字，最多两位小数（元）`);
+    }
+    const minPacks = Number(row.querySelector('.q-min').value);
+    if (!Number.isInteger(minPacks) || minPacks < 0) {
+      throw new Error(`${where}（${supplier}）：最少可购包数必须为 ≥ 0 的整数`);
+    }
+    const maxRaw = row.querySelector('.q-max').value.trim();
+    if (maxRaw === '') {
+      throw new Error(`${where}（${supplier}）：请填写最多可购包数`);
+    }
+    const maxPacks = Number(maxRaw);
+    if (!Number.isInteger(maxPacks) || maxPacks < 1) {
+      throw new Error(`${where}（${supplier}）：最多可购包数必须为 ≥ 1 的整数`);
+    }
+    if (maxPacks < minPacks) {
+      throw new Error(`${where}（${supplier}）：最多可购包数不能少于最少可购包数`);
+    }
+    quotes.push({ supplier, sheetsPerPack, pricePerPackCents: priceCents, minPacks, maxPacks });
+  });
+
+  let demandSheets;
+  if (quoteManualDemandBox.checked) {
+    demandSheets = Number(quoteDemandInput.value);
+    if (!Number.isInteger(demandSheets) || demandSheets < 1) {
+      throw new Error('手工需求张数必须为 ≥ 1 的整数');
+    }
+  }
+  return { quotes, demandSheets };
+}
+
+/** 报价组合区块启用状态与可编辑性同步。 */
+function syncPurchaseQuotesUI() {
+  const on = purchaseQuotesBox.checked;
+  quoteEditor.hidden = !on;
+  quoteManualDemandBox.disabled = !on;
+  // 需求张数：启用后，勾选「手工填写」才可编辑；否则取备料整包采购张数（由服务端回退）。
+  quoteDemandInput.disabled = !on || !quoteManualDemandBox.checked;
+  if (on && quoteRowsBox.children.length === 0) {
+    addQuoteRow();
+    addQuoteRow();
+  }
+}
+purchaseQuotesBox.addEventListener('change', syncPurchaseQuotesUI);
+quoteManualDemandBox.addEventListener('change', () => {
+  quoteDemandInput.disabled = !quoteManualDemandBox.checked;
+  if (quoteManualDemandBox.checked) quoteDemandInput.focus();
+});
+syncPurchaseQuotesUI();
 
 /** 解析章节起始页输入：支持逗号 / 顿号 / 分号 / 空白分隔；无法解析的 token 原样上送，由服务端给出明确错误。 */
 function parseChapterStarts(raw) {
@@ -163,6 +298,13 @@ form.addEventListener('submit', async (event) => {
           sheetsPerPack: Number(prepSheetsPerPackInput.value),
         }
       : undefined,
+    // 采购报价组合：仅勾选时上送；价格在收集阶段已精确换算为整数分。
+    // demandSheets 未手工填写时不上送，由服务端回退到备料整包采购张数。
+    purchaseQuotes: (() => {
+      if (!purchaseQuotesBox.checked) return undefined;
+      const { quotes, demandSheets } = collectPurchaseQuotes();
+      return { demandSheets, quotes };
+    })(),
   };
   // 已录入观察时随生成一并核验；无观察时请求体与原流程完全一致
   const requestBody = state.observations.length ? { ...payload, observations: observationPayload() } : payload;
@@ -234,6 +376,7 @@ function renderAll() {
   renderSheetNav();
   renderTable();
   renderMaterialPrep();
+  renderPurchaseQuotes();
   jsonPreview.textContent = JSON.stringify(state.result, null, 2);
   renderObsPanel();
   draw();
@@ -326,6 +469,20 @@ function renderSummary() {
       text: `印刷备料：${formatSheets(t.requiredSheets)} 张 → 整包采购 ${formatSheets(t.purchasePacks)} 包（${formatSheets(t.purchaseSheets)} 张）`,
       cls: 'prep-buy',
     });
+  }
+  if (r.purchaseQuotes && r.purchaseQuotes.enabled) {
+    const pq = r.purchaseQuotes;
+    if (pq.feasible) {
+      chips.push({
+        text: `采购报价组合：${formatYuan(pq.totals.totalCostCents)} 购入 ${formatSheets(pq.totals.totalSheets)} 张（${pq.totals.supplierCount} 家供应商，超购 ${formatSheets(pq.totals.overPurchaseSheets)} 张）`,
+        cls: 'quote-ok',
+      });
+    } else {
+      chips.push({
+        text: `采购报价组合无可行方案：还差 ${formatSheets(pq.gapSheets)} 张`,
+        cls: 'quote-fail',
+      });
+    }
   }
   summaryBox.innerHTML = '';
   chips.forEach(({ text, cls }) => {
@@ -553,6 +710,109 @@ function renderMaterialPrep() {
     footTr.appendChild(td);
   });
   prepTableFoot.appendChild(footTr);
+}
+
+/* ------------------------------ 采购报价组合 ------------------------------ */
+
+/** 整数分 → 元文本（1234 -> "12.34"；10 -> "0.10"；0 -> "0.00"），不经过浮点。 */
+function formatYuan(cents) {
+  const neg = cents < 0;
+  const abs = Math.abs(cents);
+  const yuan = Math.floor(abs / 100);
+  const fen = String(abs % 100).padStart(2, '0');
+  return `${neg ? '−' : ''}${yuan.toLocaleString('zh-CN')}.${fen}`;
+}
+
+/** 渲染采购报价组合：规则说明、需求 / 缺口 chips、逐报价采购量 / 金额 / 余量明细表。 */
+function renderPurchaseQuotes() {
+  const pq = state.result.purchaseQuotes;
+  if (!pq || !pq.enabled) {
+    purchaseQuoteCard.hidden = true;
+    return;
+  }
+  purchaseQuoteCard.hidden = false;
+  const sourceText = pq.demandSource === 'materialPrep' ? '印刷备料整包采购张数' : '手工填写';
+  quoteFormula.textContent =
+    `需求 ${formatSheets(pq.demandSheets)} 张（来源：${sourceText}）；在满足各报价最少 / 最多可购包数的整数包组合中，` +
+    '按「总价最低 → 超购张数最少 → 供应商数量最少 → 录入顺序（更早录入优先装满）」确定唯一方案，价格按分（整数）精确计算。';
+
+  quoteGapBox.hidden = pq.feasible;
+  if (!pq.feasible) {
+    quoteGapBox.textContent = `✗ 无可行组合：${pq.reason}。下表按各报价上限列出尽最大可购量（余量均为 0）。`;
+  }
+
+  const t = pq.totals;
+  const chips = [
+    { text: `需求 ${formatSheets(pq.demandSheets)} 张（${sourceText}）`, cls: 'prep' },
+    { text: `采购包数合计 ${formatSheets(t.totalPacks)} 包`, cls: 'prep' },
+    { text: `采购张数合计 ${formatSheets(t.totalSheets)} 张`, cls: 'prep-total' },
+  ];
+  if (pq.feasible) {
+    chips.push(
+      { text: `总价 ${formatYuan(t.totalCostCents)} 元`, cls: 'prep-buy' },
+      {
+        text: t.overPurchaseSheets > 0 ? `超购 ${formatSheets(t.overPurchaseSheets)} 张` : '恰好满足，无超购',
+        cls: t.overPurchaseSheets > 0 ? 'prep-warn' : 'prep-ok',
+      },
+      { text: `供应商 ${t.supplierCount} 家：${t.suppliers.join('、')}`, cls: 'prep' },
+    );
+  } else {
+    chips.push(
+      { text: `尽最大可购 ${formatSheets(t.totalSheets)} 张`, cls: 'quote-fail' },
+      { text: `缺口 ${formatSheets(pq.gapSheets)} 张`, cls: 'quote-fail' },
+      { text: `该组合合计金额 ${formatYuan(t.totalCostCents)} 元`, cls: 'prep' },
+    );
+  }
+  quoteSummary.innerHTML = '';
+  chips.forEach(({ text, cls }) => {
+    const span = document.createElement('span');
+    span.className = 'chip' + (cls ? ` ${cls}` : '');
+    span.textContent = text;
+    quoteSummary.appendChild(span);
+  });
+
+  quoteTableBody.innerHTML = '';
+  pq.rows.forEach((row) => {
+    const tr = document.createElement('tr');
+    if (row.packs === 0 && pq.feasible) tr.className = 'quote-row-zero';
+    [
+      row.index,
+      row.supplier,
+      formatSheets(row.sheetsPerPack),
+      `${formatYuan(row.pricePerPackCents)} 元/包`,
+      `${formatSheets(row.minPacks)} ~ ${formatSheets(row.maxPacks)}`,
+      formatSheets(row.packs),
+      formatSheets(row.sheets),
+      `${formatYuan(row.amountCents)} 元`,
+      `${formatSheets(row.remainingPacks)} 包 / ${formatSheets(row.remainingSheets)} 张`,
+    ].forEach((text) => {
+      const td = document.createElement('td');
+      td.textContent = text;
+      tr.appendChild(td);
+    });
+    quoteTableBody.appendChild(tr);
+  });
+
+  quoteTableFoot.innerHTML = '';
+  const footTr = document.createElement('tr');
+  [
+    '合计',
+    '—',
+    '—',
+    '—',
+    '—',
+    formatSheets(t.totalPacks),
+    formatSheets(t.totalSheets),
+    `${formatYuan(t.totalCostCents)} 元`,
+    pq.feasible
+      ? (t.overPurchaseSheets > 0 ? `超购 ${formatSheets(t.overPurchaseSheets)} 张` : '无超购')
+      : `缺口 ${formatSheets(pq.gapSheets)} 张`,
+  ].forEach((text) => {
+    const td = document.createElement('td');
+    td.textContent = text;
+    footTr.appendChild(td);
+  });
+  quoteTableFoot.appendChild(footTr);
 }
 
 /* ------------------------------ 试印核验 ------------------------------ */

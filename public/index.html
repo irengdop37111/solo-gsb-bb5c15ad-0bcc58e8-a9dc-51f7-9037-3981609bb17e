@@ -119,6 +119,41 @@
         <label for="prepSheetsPerPack">每包张数</label>
         <input id="prepSheetsPerPack" type="number" min="1" max="100000000" step="1" value="500" disabled>
       </div>
+      <div class="field checkbox-field">
+        <label for="purchaseQuotesEnabled">
+          <input id="purchaseQuotesEnabled" type="checkbox">
+          <span>采购报价组合（录入多条本地报价，在满足需求与各报价最少 / 最多可购包数的组合中，按「总价最低 → 超购最少 → 供应商最少 → 录入顺序」取唯一方案；价格按分精确计算）</span>
+        </label>
+      </div>
+      <div class="field checkbox-field quote-subfield">
+        <label for="quoteManualDemand">
+          <input id="quoteManualDemand" type="checkbox" disabled>
+          <span>手工填写需求张数（不勾选时取印刷备料的整包采购张数；未启用备料时必须勾选并填写）</span>
+        </label>
+      </div>
+      <div class="field quote-subfield">
+        <label for="quoteDemandSheets">需求张数</label>
+        <input id="quoteDemandSheets" type="number" min="1" max="100000000" step="1" placeholder="勾选「手工填写」后输入；或先启用印刷备料" disabled>
+      </div>
+      <div class="quote-editor quote-subfield" id="quoteEditor" hidden>
+        <div class="quote-editor-head">
+          <span>供应商</span>
+          <span>每包张数</span>
+          <span>每包价格（元）</span>
+          <span>最少包数</span>
+          <span>最多包数</span>
+          <span>操作</span>
+        </div>
+        <div id="quoteRows"></div>
+        <div class="field actions">
+          <button type="button" id="addQuoteBtn" class="ghost">＋ 添加报价</button>
+          <span class="hint" id="quoteCountHint"></span>
+        </div>
+        <p class="hint">
+          每包价格按元填写（最多两位小数，如 123.45），提交时精确换算为分（整数）比较，不使用浮点。
+          供应商名称不可重复；最少包数为 0 表示不设下限。最多录入 8 条报价。
+        </p>
+      </div>
       <div class="field actions">
         <button type="submit">生成拼版</button>
       </div>
@@ -149,6 +184,15 @@
       各帖<strong>分别向上取整</strong>后再汇总（禁止先合并各帖再算损耗）；汇总后的需领纸合计按每包张数<strong>向上取整</strong>得到整包采购量。
       结果区逐帖展示净用纸、开机损耗、过程损耗与需领纸，并给出整包采购汇总；导出的拼版清单 JSON 在 <code>materialPrep</code> 段附带相同数据。
       不勾选时不进行任何备料计算，响应与之前完全一致。
+    </p>
+    <p class="hint">
+      采购报价组合（可选）：勾选后录入多条本地报价——供应商、每包张数、每包价格（元）、最少 / 最多可购包数。
+      需求张数默认<strong>接入印刷备料汇总后的整包采购张数</strong>（备料未启用时请勾选「手工填写需求张数」），也允许手工填写覆盖。
+      系统在满足需求与各报价边界的全部整数包组合中，按
+      <strong>「总价最低 → 超购张数最少 → 供应商数量最少 → 录入顺序（更早录入优先装满）」</strong>确定唯一方案；
+      价格提交时精确换算为<strong>分（整数）</strong>比较，杜绝浮点误差。
+      结果区逐报价展示采购包数 / 张数 / 金额与可购余量；<strong>无可行组合时给出具体缺口张数</strong>（并按各报价上限列出尽最大可购量）；
+      导出的拼版清单 JSON 在 <code>purchaseQuotes</code> 段附带相同数据。不勾选时响应与之前完全一致。
     </p>
     <p class="error" id="errorBox" hidden></p>
   </section>
@@ -237,6 +281,26 @@
             <tr>
               <th>帖</th><th>每帖实际张数</th><th>成品份数</th><th>净用纸（张）</th>
               <th>开机损耗（张）</th><th>过程损耗（张）</th><th>损耗合计（张）</th><th>需领纸（张）</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+          <tfoot></tfoot>
+        </table>
+      </div>
+    </section>
+
+    <section id="purchaseQuoteCard" class="prep-card" hidden>
+      <h2>采购报价组合</h2>
+      <p class="hint" id="quoteFormula"></p>
+      <div id="quoteGap" class="quote-gap" hidden></div>
+      <div class="summary" id="quoteSummary"></div>
+      <div class="table-wrap">
+        <table id="quoteTable">
+          <thead>
+            <tr>
+              <th>#</th><th>供应商</th><th>每包张数</th><th>每包价格</th>
+              <th>最少 / 最多包数</th><th>采购包数</th><th>采购张数</th>
+              <th>采购金额</th><th>余量（可再购）</th>
             </tr>
           </thead>
           <tbody></tbody>
