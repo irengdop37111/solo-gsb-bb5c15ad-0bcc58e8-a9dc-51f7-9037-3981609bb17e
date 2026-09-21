@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>骑马钉小册子拼版预演</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>骑马钉小册子拼版预演</h1>
+    <p>
+      输入成品页数、每帖张数、装订方向与双面翻转方式，系统自动补空白页、按帖拆分页码，
+      生成每张纸正反面的左右页位；背面依据长边 / 短边翻转执行坐标变换，保证裁切折叠后的阅读顺序。
+    </p>
+  </header>
+
+  <section class="card">
+    <form id="imposeForm">
+      <div class="field">
+        <label for="totalPages">成品页数</label>
+        <input id="totalPages" type="number" min="1" max="10000" step="1" value="16" required>
+      </div>
+      <div class="field">
+        <label for="sheetsPerSignature">每帖张数上限</label>
+        <input id="sheetsPerSignature" type="number" min="1" max="100" step="1" value="2" required>
+      </div>
+      <div class="field checkbox-field">
+        <label for="balancedSplit">
+          <input id="balancedSplit" type="checkbox">
+          <span>均衡分帖（在最少帖数间均匀分配张数，差 ≤ 1，空白页只留在末帖末尾）</span>
+        </label>
+      </div>
+      <div class="field checkbox-field">
+        <label for="chapterSplit">
+          <input id="chapterSplit" type="checkbox">
+          <span>章节优先分帖（按章节起始页规划，章节尽量不跨帖，章末允许帖内补白）</span>
+        </label>
+      </div>
+      <div class="field" id="chapterStartsField">
+        <label for="chapterStarts">章节起始页（递增，逗号分隔）</label>
+        <input id="chapterStarts" type="text" placeholder="如 1, 9, 13, 17" disabled>
+      </div>
+      <div class="field">
+        <label for="binding">装订方式</label>
+        <select id="binding">
+          <option value="left" selected>左装订（第 1 页在右）</option>
+          <option value="right">右装订（第 1 页在左）</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="flip">双面翻转方式</label>
+        <select id="flip">
+          <option value="short" selected>短边翻转（左右页位互换）</option>
+          <option value="long">长边翻转（内容旋转 180°）</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="paperThickness">纸张厚度（mm）</label>
+        <input id="paperThickness" type="number" min="0" max="100" step="0.01" value="0">
+      </div>
+      <div class="field">
+        <label for="maxCompensation">最大补偿量（mm）</label>
+        <input id="maxCompensation" type="number" min="0" max="100" step="0.1" value="0">
+      </div>
+      <div class="field">
+        <label for="paperWidth">纸张宽（mm，可选）</label>
+        <input id="paperWidth" type="number" min="0" max="3000" step="0.1" placeholder="如 440">
+      </div>
+      <div class="field">
+        <label for="paperHeight">纸张高（mm，可选）</label>
+        <input id="paperHeight" type="number" min="0" max="3000" step="0.1" placeholder="如 310">
+      </div>
+      <div class="field">
+        <label for="pageWidth">成品页宽（mm，可选）</label>
+        <input id="pageWidth" type="number" min="0" max="3000" step="0.1" placeholder="如 210">
+      </div>
+      <div class="field">
+        <label for="pageHeight">成品页高（mm，可选）</label>
+        <input id="pageHeight" type="number" min="0" max="3000" step="0.1" placeholder="如 297">
+      </div>
+      <div class="field">
+        <label for="bleedMm">出血（mm，可选）</label>
+        <input id="bleedMm" type="number" min="0" max="100" step="0.1" placeholder="如 3">
+      </div>
+      <div class="field">
+        <label for="safetyMm">安全边距（mm，可选）</label>
+        <input id="safetyMm" type="number" min="0" max="100" step="0.1" placeholder="如 5">
+      </div>
+      <div class="field checkbox-field">
+        <label for="productionMarks">
+          <input id="productionMarks" type="checkbox">
+          <span>双面生产标记（需先启用适配检查：为每张纸生成裁切线、折线标与套准十字，背面按长边 / 短边翻转做同物理位置坐标变换）</span>
+        </label>
+      </div>
+      <div class="field">
+        <label for="markSizeMm">生产标记尺寸（mm，可选）</label>
+        <input id="markSizeMm" type="number" min="0.1" max="100" step="0.1" placeholder="缺省 5">
+      </div>
+      <div class="field checkbox-field">
+        <label for="materialPrepEnabled">
+          <input id="materialPrepEnabled" type="checkbox">
+          <span>印刷备料（按拼版各帖实际张数估算用纸：逐帖计算净用纸、开机损耗、过程损耗与需领纸，再汇总按整包向上采购）</span>
+        </label>
+      </div>
+      <div class="field">
+        <label for="prepCopies">成品份数</label>
+        <input id="prepCopies" type="number" min="1" max="100000000" step="1" value="1000" disabled>
+      </div>
+      <div class="field">
+        <label for="prepMakeready">每帖开机损耗张数</label>
+        <input id="prepMakeready" type="number" min="0" max="1000000" step="1" value="10" disabled>
+      </div>
+      <div class="field">
+        <label for="prepWasteRate">过程损耗率（%）</label>
+        <input id="prepWasteRate" type="number" min="0" max="99.999" step="0.1" value="3" disabled>
+      </div>
+      <div class="field">
+        <label for="prepSheetsPerPack">每包张数</label>
+        <input id="prepSheetsPerPack" type="number" min="1" max="100000000" step="1" value="500" disabled>
+      </div>
+      <div class="field actions">
+        <button type="submit">生成拼版</button>
+      </div>
+    </form>
+    <p class="hint">
+      固定分帖（默认）：每帖页数 = 每帖张数上限 × 4；总页数不足整帖时，自动在末尾补空白页。
+      勾选「均衡分帖」后仍以每帖张数为上限，先取最少帖数，再把整本所需纸张在各帖间均匀分配（各帖实际张数差不超过 1），
+      各帖按自身页数连续编号，空白页只出现在末帖末尾，爬移补偿也按各帖实际层数重算；响应中每帖返回 actualSheetCount，并汇总相对固定分帖节省的空白页数。
+      勾选「章节优先分帖」并填写递增的章节起始页后，系统在每帖不超过张数上限、每帖纸张数为整数的前提下规划连续页段，
+      按「章节被拆分次数最少 → 补白页总数最少 → 帖数最少 → 前帖优先装满」确定唯一方案；章节末尾允许插入帖内空白，
+      后续真实页码保持连续并正确进入下一帖，逐帖展示覆盖章节、真实页范围与补白位置（与均衡分帖互斥）。
+      纸张厚度与最大补偿量任一为 0（或缺省）时不做爬移补偿；启用后第 i 张（由外向内 i 从 0 起）补偿量 = min(i × 纸张厚度 × 2, 最大补偿量) mm。
+    </p>
+    <p class="hint">
+      适配检查（可选）：同时填写纸张宽高与成品页宽高后，系统按每个正反页位的实际方向计算可用矩形，
+      检查成品页是否放得下、出血是否落在纸张内、安全边距是否过大，并在逐张预览与清单中标出不合格页位；
+      四项尺寸全部留空（或为 0）则不检查。出血 / 安全边距缺省为 0。
+    </p>
+    <p class="hint">
+      双面生产标记（可选，需启用适配检查）：勾选后为每张纸生成三类标记——<strong>裁切线</strong>（四个成品页外角各两段）、
+      <strong>折线标</strong>（中线上下两端）与<strong>套准十字</strong>（左右出血框外侧）；每个标记按固定候选位置顺序尝试，
+      只有线段完整落在纸内、避开两侧出血框且不与已放置标记相交才落位，无可用位置则省略；背面标记由正面按长边 / 短边翻转
+      做同一物理位置的坐标变换，保证正背套准。画布按纸张 mm 等比绘制，省略的标记逐张列出原因，导出 JSON 含每个标记的坐标与原因。
+    </p>
+    <p class="hint">
+      印刷备料（可选）：勾选并填写成品份数、每帖开机损耗张数、过程损耗率（%）与每包张数后，系统按拼版结果<strong>各帖实际张数</strong>
+      逐帖计算——净用纸 = 每帖实际张数 × 成品份数；<strong>需领纸 = ceil((净用纸 + 开机损耗) / (1 − 过程损耗率))</strong>，
+      各帖<strong>分别向上取整</strong>后再汇总（禁止先合并各帖再算损耗）；汇总后的需领纸合计按每包张数<strong>向上取整</strong>得到整包采购量。
+      结果区逐帖展示净用纸、开机损耗、过程损耗与需领纸，并给出整包采购汇总；导出的拼版清单 JSON 在 <code>materialPrep</code> 段附带相同数据。
+      不勾选时不进行任何备料计算，响应与之前完全一致。
+    </p>
+    <p class="error" id="errorBox" hidden></p>
+  </section>
+
+  <section class="card" id="resultCard" hidden>
+    <div class="summary" id="summary"></div>
+    <div class="toolbar">
+      <button id="prevBtn" type="button" class="ghost">← 上一张</button>
+      <select id="sheetSelect" aria-label="选择纸张"></select>
+      <button id="nextBtn" type="button" class="ghost">下一张 →</button>
+      <span class="spacer"></span>
+      <button id="exportBtn" type="button">导出拼版清单 JSON</button>
+    </div>
+    <div class="preview-row">
+      <div class="canvas-col">
+        <canvas id="sheetCanvas" width="1240" height="720"></canvas>
+      </div>
+      <aside class="verify-col" aria-label="试印核验">
+        <h2>试印核验</h2>
+        <p class="hint">
+          对照实物纸张录入 1～12 条观察（同一页位不可重复）；服务端用同一输入重算
+          「左/右装订 × 长/短边翻转」四种设置，逐条比对页码、空白与朝向。
+          仅唯一零差异组合判定验证通过；并列最优时返回无法判定，不强行推荐，
+          并自动给出「下一处观察建议」（按最坏情况下剩余候选最少选取，点击「查看建议」可跳到对应纸张高亮页位）。
+        </p>
+        <form id="obsForm">
+          <div class="field">
+            <label for="obsSignature">帖</label>
+            <select id="obsSignature"></select>
+          </div>
+          <div class="field">
+            <label for="obsSheet">张</label>
+            <select id="obsSheet"></select>
+          </div>
+          <div class="field">
+            <label for="obsSide">面</label>
+            <select id="obsSide">
+              <option value="front">正面</option>
+              <option value="back">背面</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="obsPosition">页位</label>
+            <select id="obsPosition">
+              <option value="left">左页位</option>
+              <option value="right">右页位</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="obsPage">看到的页码（空白页留空）</label>
+            <input id="obsPage" type="number" min="1" step="1" placeholder="空白页留空">
+          </div>
+          <div class="field">
+            <label for="obsOrientation">内容朝向</label>
+            <select id="obsOrientation">
+              <option value="upright">正向（页首朝上）</option>
+              <option value="rotated">倒置（旋转 180°）</option>
+            </select>
+          </div>
+          <div class="field actions">
+            <button type="submit">＋ 添加观察</button>
+          </div>
+          <div class="field actions">
+            <button type="button" id="fillCurrentBtn" class="ghost">填入当前预览张</button>
+          </div>
+        </form>
+        <p class="error" id="obsError" hidden></p>
+        <div class="verify-obs-head">
+          <strong>已录入观察（<span id="obsCount">0</span> / 12）</strong>
+          <span class="spacer"></span>
+          <button id="verifyBtn" type="button" disabled>开始核验</button>
+          <button id="clearObsBtn" type="button" class="ghost" disabled>清空</button>
+        </div>
+        <ul id="obsList" class="obs-list"></ul>
+        <div id="verifyResult"></div>
+      </aside>
+    </div>
+
+    <section id="materialPrepCard" class="prep-card" hidden>
+      <h2>印刷备料</h2>
+      <p class="hint" id="prepFormula"></p>
+      <div class="summary" id="prepSummary"></div>
+      <div class="table-wrap">
+        <table id="prepTable">
+          <thead>
+            <tr>
+              <th>帖</th><th>每帖实际张数</th><th>成品份数</th><th>净用纸（张）</th>
+              <th>开机损耗（张）</th><th>过程损耗（张）</th><th>损耗合计（张）</th><th>需领纸（张）</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+          <tfoot></tfoot>
+        </table>
+      </div>
+    </section>
+
+    <h2>拼版清单</h2>
+    <div class="table-wrap">
+      <table id="sheetTable">
+        <thead>
+          <tr><th>帖</th><th>张</th><th>面</th><th>左页位</th><th>右页位</th><th>备注</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <details>
+      <summary>查看拼版清单 JSON</summary>
+      <pre id="jsonPreview"></pre>
+    </details>
+  </section>
+
+  <footer>骑马钉拼版预演 · Node.js + Express + 原生 Canvas</footer>
+  <script src="app.js"></script>
+</body>
+</html>

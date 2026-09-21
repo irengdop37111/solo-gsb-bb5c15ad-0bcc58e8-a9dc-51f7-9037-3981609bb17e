@@ -1,0 +1,56 @@
+'use strict';
+
+const path = require('path');
+const express = require('express');
+const { computeImposition } = require('./src/imposition');
+
+const app = express();
+
+app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
+
+app.get('/api/health', (req, res) => {
+  res.json({ ok: true });
+});
+
+/**
+ * 拼版计算接口。
+ * 请求体：{
+ *   totalPages, sheetsPerSignature, binding: 'left'|'right', flip: 'long'|'short',
+ *   paperThickness?, maxCompensation?,                       // 可选，纸张厚度与爬移最大补偿量（mm，缺省/为 0 不补偿）
+ *   balancedSplit?, chapterSplit?, chapterStarts?,           // 可选，分帖模式（均衡 / 章节优先，互斥）
+ *   paperWidth?, paperHeight?, pageWidth?, pageHeight?, bleedMm?, safetyMm?, // 可选，适配检查
+ *   productionMarks?, markSizeMm?,                          // 可选，双面生产标记（需启用适配检查）
+ *   observations?                                            // 可选，试印核验观察（1～12 条；缺省/空数组不启用）
+ *   materialPrep?                                            // 可选，印刷备料 { copies, makereadySheets, processWasteRate, sheetsPerPack }；缺省不启用
+ * }
+ * 响应：拼版清单 JSON（与前端「导出拼版清单 JSON」内容一致）；
+ * 启用试印核验时顶层带 verification（观察、四种装订×翻转候选的评分与结论）；
+ * 启用双面生产标记时每张纸带 productionMarks（正背面标记线段坐标 / 省略原因），
+ * 顶层 productionMarks 给出尺寸、正背坐标变换与放置 / 省略汇总；
+ * 启用印刷备料时顶层带 materialPrep（逐帖净用纸 / 开机损耗 / 过程损耗 / 需领纸，
+ * 以及汇总后的整包采购包数 / 采购张数 / 包余；逐帖取整后再汇总）。
+ */
+app.post('/api/impose', (req, res) => {
+  try {
+    const result = computeImposition(req.body || {});
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.use('/api', (req, res) => {
+  res.status(404).json({ error: '接口不存在' });
+});
+
+const PORT = Number(process.env.PORT) || 8080;
+
+// 直接运行（node server.js / Docker CMD）时启动服务；被测试 require 时仅导出 app。
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`骑马钉拼版预演已启动: http://localhost:${PORT}`);
+  });
+}
+
+module.exports = { app, PORT };
