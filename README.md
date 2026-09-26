@@ -15,8 +15,9 @@
 - 可选 **双面生产标记**：启用适配检查后可勾选，为每张纸正、背面生成**裁切线**（四个成品页外角各两段）、**折线标**（中线上下两端）与**套准十字**（左右出血框外侧，每侧按「居中 → 1/4 → 3/4」固定候选位置顺序尝试）；线段只有**完整落在纸内、避开两侧出血框且不与同面已放置标记相交**才落位，无可用位置则**省略并逐候选返回原因**；背面标记由正面按长边 / 短边翻转做**同一物理位置的坐标变换**，保证正背套准，爬移变化后同步重算；
 - 可选 **试印核验**：对照实物纸张录入 1～12 条观察（帖 / 张 / 正背面 / 左右页位 / 看到的页码或空白 / 内容朝向），服务端用同一输入重算「左/右装订 × 长/短边翻转」四种设置逐条比对，仅唯一零差异组合判定验证通过，并列最优时返回无法判定及并列组合；**无法判定时自动从尚未观察的页位计算「下一处观察建议」**（含定位与各候选预期值）；
 - 可选 **印刷备料**：填写成品份数、每帖开机损耗张数、过程损耗率与每包张数，按拼版结果**各帖实际张数**逐帖计算净用纸，并以 `需领纸 = ceil((净用纸 + 开机损耗) / (1 − 过程损耗率))` **逐帖向上取整**，再汇总后按整包向上采购（**禁止先合并各帖再计算损耗**）；页面逐帖展示净用纸、开机损耗、过程损耗与需领纸及整包采购汇总，导出 JSON 的 `materialPrep` 段附带相同数据；
+- 可选 **采购报价组合**：需求张数默认接入印刷备料的**整包采购张数**（也可手工填写覆盖），录入多条本地报价（供应商、每包张数、每包价格、最少/最多可购包数）后，系统在满足需求与各报价边界的组合中按「**总价最低 → 超购张数最少 → 供应商数量最少 → 录入顺序**」确定唯一方案，**价格按分精确计算（不做浮点比较）**；无可行组合时显示具体缺口；页面逐报价展示采购量、金额与余量，导出 JSON 的 `purchaseQuotes` 段附带相同数据；
 - 画布**逐张显示**纸面、页码、空白页位与翻转方向示意；
-- 一键**导出拼版清单 JSON**（包含适配检查、试印核验与印刷备料结果）。
+- 一键**导出拼版清单 JSON**（包含适配检查、试印核验、印刷备料与采购报价组合结果）。
 
 ## 快速开始（Docker Compose 一键启动）
 
@@ -301,6 +302,55 @@ npm test           # 运行拼版逻辑单元测试
 
 前端结果区「**印刷备料**」面板逐帖列出每帖实际张数、净用纸、开机损耗、过程损耗、损耗合计与需领纸，底部汇总行给出合计，顶部 chips 给出需领纸合计与整包采购（包数 / 张数 / 包余）；导出的拼版清单 JSON 含同一 `materialPrep` 段。备料只读取拼版结果中各帖的实际张数，固定 / 均衡 / 章节优先分帖均可启用，不影响页码拼版本身。
 
+### 采购报价组合（purchase quote combination）
+
+勾选表单中的「采购报价组合」并录入多条本地报价后启用（API 传 `purchaseQuotes: { demandSheets?, quotes: [...] }`）；缺省 / 不传 / `null` / `false` / `{ "enabled": false }` 时**不启用，响应中不含任何报价组合字段，与旧版本完全一致**。
+
+- **需求张数** `demandSheets`：1 ~ 500,000 的整数，**可手工填写**；留空时自动接入**印刷备料的整包采购张数**（`materialPrep.totals.purchaseSheets`，需同时启用印刷备料）。两者都提供时**手工填写优先**；都未提供时返回 400 明确错误；
+- **本地报价** `quotes`：1 ~ 20 条，每条包含——
+  - `supplier`：供应商名称（非空字符串，≤ 50 字符，不可重复）；
+  - `sheetsPerPack`：每包张数（1 ~ 500,000 的整数）；
+  - `pricePerPack`：每包价格（元，0 ~ 99,999.99，**精确到分**，小数最多两位；内部一律换算为整数「分」计算与比较，不做浮点比较）；
+  - `minPacks`：**可选**，最少可购包数（0 ~ 100,000 的整数，缺省 0；启用该供应商即至少购买此包数）；
+  - `maxPacks`：**可选**，最多可购包数（≥ minPacks 的整数；缺省 / `null` 表示不限）。
+
+每条报价的采购包数 `p` 满足 `p = 0`（不向该供应商采购）或 `minPacks ≤ p ≤ maxPacks`。在所有满足「总张数 ≥ 需求张数」且各报价边界成立的组合中，按以下优先级确定**唯一方案**：
+
+1. **总价最低**（按分精确比较）；
+2. **超购张数最少**（总张数 − 需求张数）；
+3. **供应商数量最少**（采购包数 > 0 的报价条数）；
+4. **录入顺序优先**（从第 1 条报价起逐项比较采购包数向量，先出现差异的报价中包数较多者胜出，即同等条件下优先让先录入的报价承担采购）。
+
+**无可行组合**（全部报价按最多可购包数采购仍不足需求）时不报错，返回 `feasible: false` 与**具体缺口**：`maxPurchasableSheets`（最多可购张数）与 `gapSheets`（缺口张数 = 需求 − 最多可购）。
+
+示例：需求 4500 张（16 页、2 帖、1000 份、每包 500 张的备料结果），报价「甲：500 张/包、120 元/包」与「乙：1000 张/包、230 元/包」——甲×9 = 4500 张 / 1080 元，乙×5 = 5000 张 / 1150 元，**乙×4 + 甲×1 = 4500 张 / 1040 元** 最优。
+
+顶层 `purchaseQuotes` 段示例：
+
+```json
+{
+  "enabled": true,
+  "demandSheets": 4500,
+  "demandSource": "materialPrep",
+  "rule": "总价最低 → 超购张数最少 → 供应商数量最少 → 录入顺序",
+  "feasible": true,
+  "quotes": [
+    { "index": 1, "supplier": "甲", "sheetsPerPack": 500, "pricePerPackCents": 12000,
+      "minPacks": 0, "maxPacks": null, "packs": 1, "sheets": 500, "costCents": 12000,
+      "remainingPacks": null, "remainingSheets": null },
+    { "index": 2, "supplier": "乙", "sheetsPerPack": 1000, "pricePerPackCents": 23000,
+      "minPacks": 0, "maxPacks": 6, "packs": 4, "sheets": 4000, "costCents": 92000,
+      "remainingPacks": 2, "remainingSheets": 2000 }
+  ],
+  "totals": { "packCount": 5, "totalSheets": 4500, "overageSheets": 0, "supplierCount": 2, "totalCostCents": 104000 },
+  "message": "需求 4,500 张（取自印刷备料整包采购张数）：共采购 5 包 / 4,500 张，超购 0 张，总价 1040.00 元，使用 2 家供应商。"
+}
+```
+
+逐报价返回：`packs`（采购包数）、`sheets`（采购张数）、`costCents`（金额，分）与**余量** `remainingPacks` / `remainingSheets`（距最多可购包数的剩余；`maxPacks` 不限时为 `null`）；`totals` 给出总包数 / 总张数 / 超购张数 / 供应商数量 / 总价（分）。`demandSource` 标明需求来源（`materialPrep` = 取自印刷备料，`manual` = 手工填写）。
+
+前端结果区「**采购报价组合**」面板逐报价列出每包张数、每包价格、可购包数边界、采购包数、采购张数、金额与余量，底部汇总行给出合计，顶部 chips 给出总价、总采购量、超购张数与供应商数量；无可行组合时以红色 chips 显示最多可购张数与缺口张数；导出的拼版清单 JSON 含同一 `purchaseQuotes` 段。
+
 ## API
 
 ### `POST /api/impose`
@@ -335,6 +385,13 @@ npm test           # 运行拼版逻辑单元测试
     "makereadySheets": 10,
     "processWasteRate": 0.03,
     "sheetsPerPack": 500
+  },
+  "purchaseQuotes": {
+    "demandSheets": 4500,
+    "quotes": [
+      { "supplier": "甲", "sheetsPerPack": 500, "pricePerPack": 120 },
+      { "supplier": "乙", "sheetsPerPack": 1000, "pricePerPack": "230.00", "minPacks": 0, "maxPacks": 6 }
+    ]
   }
 }
 ```
@@ -364,6 +421,10 @@ npm test           # 运行拼版逻辑单元测试
   - `processWasteRate`：过程损耗率，0 ≤ r < 1 的小数（`0.03` = 3%）；
   - `sheetsPerPack`：每包张数，≥ 1 的整数。
   - 逐帖 `ceil((净用纸 + 开机损耗) / (1 − 过程损耗率))` 后汇总，再按每包向上取整采购；参数非对象、份数 / 包数非正整数、开机损耗为负、损耗率越界（< 0 或 ≥ 1）均返回 400 明确错误。
+- `purchaseQuotes`：**可选**，采购报价组合参数对象（缺省 / `null` / `false` 不启用，响应不含报价组合字段，与旧版本完全一致）。字段：
+  - `demandSheets`：**可选**，需求张数（1 ~ 500,000 的整数）；缺省时接入印刷备料的整包采购张数（需同时启用 `materialPrep`），手工填写优先；
+  - `quotes`：本地报价数组（1 ~ 20 条），每条：`supplier`（供应商，非空且不重复）、`sheetsPerPack`（每包张数，正整数）、`pricePerPack`（每包价格，元，精确到分）、`minPacks`（可选，最少可购包数，缺省 0）、`maxPacks`（可选，最多可购包数，缺省 / `null` 不限）。
+  - 按「总价最低 → 超购张数最少 → 供应商数量最少 → 录入顺序」确定唯一方案，价格按分精确计算；报价非对象 / 为空、供应商为空或重复、每包张数非正整数、价格非分位精确或越界、包数边界非法（maxPacks < minPacks）、需求张数缺失且未启用备料等均返回 400 明确错误；无可行组合时返回 200 与 `feasible: false` 及具体缺口。
 
 后两个爬移参数任一为 0（或不传）时不做爬移补偿，所有页位 `offsetMm` 为 0，旧调用方无需改动。
 
@@ -481,7 +542,9 @@ npm test           # 运行拼版逻辑单元测试
 
 启用印刷备料时，顶层增加 `materialPrep`（结构与示例见上文「印刷备料」一节）：逐帖 `signatures[]` 给出 `signature` / `actualSheetCount` / `copies` / `netSheets`（净用纸）/ `makereadySheets`（开机损耗）/ `processWaste`（过程损耗，含逐帖取整余量）/ `totalWaste`（损耗合计）/ `requiredSheets`（需领纸）；`totals` 给出逐帖汇总后的净用纸 / 各类损耗 / 需领纸合计，以及整包采购 `purchasePacks`（采购包数）/ `sheetsPerPack` / `purchaseSheets`（采购张数）/ `packRemainder`（包余）。未启用时响应中不含 `materialPrep` 字段。
 
-参数非法时返回 `400` 与错误信息（含纸张厚度 / 最大补偿量为负，尺寸参数为负、非数字或只提供部分尺寸，`balancedSplit` / `chapterSplit` 非布尔值，两种分帖模式同时启用，章节起始页非数组 / 为空 / 非整数 / 重复 / 未递增 / 越界，观察记录非数组 / 超过 12 条 / 索引越界 / 重复观察 / 字段非法，`productionMarks` 非布尔值、未启用适配检查就开启生产标记、`markSizeMm` 非正数或超过 100mm，以及备料参数 `materialPrep` 非对象、成品份数 / 每包张数非正整数、开机损耗为负、过程损耗率不在 [0, 1) 等情况）。另提供 `GET /api/health` 健康检查。
+启用采购报价组合时，顶层增加 `purchaseQuotes`（结构与示例见上文「采购报价组合」一节）：`demandSheets` / `demandSource`（需求张数及来源）、逐报价 `quotes[]`（`packs` 采购包数 / `sheets` 采购张数 / `costCents` 金额（分）/ `remainingPacks` / `remainingSheets` 余量）、`totals`（总包数 / 总张数 / 超购张数 / 供应商数量 / 总价（分））与可行结论 `feasible`；无可行组合时带 `maxPurchasableSheets` / `gapSheets` 具体缺口。未启用时响应中不含 `purchaseQuotes` 字段。
+
+参数非法时返回 `400` 与错误信息（含纸张厚度 / 最大补偿量为负，尺寸参数为负、非数字或只提供部分尺寸，`balancedSplit` / `chapterSplit` 非布尔值，两种分帖模式同时启用，章节起始页非数组 / 为空 / 非整数 / 重复 / 未递增 / 越界，观察记录非数组 / 超过 12 条 / 索引越界 / 重复观察 / 字段非法，`productionMarks` 非布尔值、未启用适配检查就开启生产标记、`markSizeMm` 非正数或超过 100mm，备料参数 `materialPrep` 非对象、成品份数 / 每包张数非正整数、开机损耗为负、过程损耗率不在 [0, 1)，以及报价组合参数 `purchaseQuotes` 非对象、报价为空或超过 20 条、供应商为空或重复、每包张数 / 包数边界非法、最多可购包数小于最少可购包数、价格未精确到分或越界、需求张数缺失且未启用印刷备料等情况）。另提供 `GET /api/health` 健康检查。
 
 调用示例（生成带双面生产标记的拼版清单，460×330 纸张放 210×297 成品页，短边翻转）：
 
@@ -522,6 +585,29 @@ curl -s -X POST http://localhost:8080/api/impose \
 #      "sheetsPerPack": 500, "purchaseSheets": 4500, "packRemainder": 354 }
 ```
 
+调用示例（启用采购报价组合：需求缺省接入印刷备料整包采购张数 4500，两条本地报价择优组合）：
+
+```bash
+curl -s -X POST http://localhost:8080/api/impose \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "totalPages": 16,
+    "sheetsPerSignature": 2,
+    "binding": "left",
+    "flip": "short",
+    "materialPrep": { "copies": 1000, "makereadySheets": 10, "processWasteRate": 0.03, "sheetsPerPack": 500 },
+    "purchaseQuotes": {
+      "quotes": [
+        { "supplier": "甲", "sheetsPerPack": 500, "pricePerPack": 120 },
+        { "supplier": "乙", "sheetsPerPack": 1000, "pricePerPack": "230.00", "maxPacks": 6 }
+      ]
+    }
+  }' | jq '.purchaseQuotes | { demandSheets, demandSource, feasible, totals }'
+# => { "demandSheets": 4500, "demandSource": "materialPrep", "feasible": true,
+#      "totals": { "packCount": 5, "totalSheets": 4500, "overageSheets": 0,
+#                  "supplierCount": 2, "totalCostCents": 104000 } }
+```
+
 ## 目录结构
 
 ```
@@ -531,7 +617,8 @@ curl -s -X POST http://localhost:8080/api/impose \
 ├── src/productionMarks.js # 双面生产标记（裁切线 / 折线标 / 套准十字候选落位、正背坐标变换、省略原因）
 ├── src/verification.js    # 试印核验（观察校验、四种装订×翻转重算比对、候选排序与结论）
 ├── src/materialPrep.js    # 印刷备料（逐帖净用纸 / 开机损耗 / 过程损耗 / 需领纸 ceil、整包采购汇总）
-├── public/                # 前端（原生 Canvas 逐张绘制、原始/补偿页位叠加、适配标记、生产标记、试印核验面板、印刷备料面板、JSON 导出）
+├── src/purchaseQuotes.js  # 采购报价组合（需求接入整包采购张数或手工填写、按分精确求解最优整包组合、缺口提示）
+├── public/                # 前端（原生 Canvas 逐张绘制、原始/补偿页位叠加、适配标记、生产标记、试印核验面板、印刷备料面板、采购报价组合面板、JSON 导出）
 │   ├── index.html
 │   ├── app.js
 │   └── style.css
@@ -541,6 +628,7 @@ curl -s -X POST http://localhost:8080/api/impose \
 ├── test/chapterSplit.test.js
 ├── test/verification.test.js
 ├── test/materialPrep.test.js
+├── test/purchaseQuotes.test.js
 ├── test/api.test.js
 ├── Dockerfile
 └── docker-compose.yml

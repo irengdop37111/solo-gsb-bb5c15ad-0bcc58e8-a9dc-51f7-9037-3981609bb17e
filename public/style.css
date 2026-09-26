@@ -237,6 +237,50 @@ button.ghost:disabled {
   bottom: 0;
 }
 
+/* ------------------------------ 采购报价组合 ------------------------------ */
+
+.pq-editor {
+  flex: 1 1 100%;
+  border: 1px dashed #c4ccd9;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.pq-editor .table-wrap {
+  max-height: 240px;
+}
+
+.pq-editor input {
+  min-width: 0;
+  width: 100%;
+}
+
+.pq-editor td {
+  padding: 4px 6px;
+}
+
+.pq-editor .actions {
+  margin-top: 8px;
+}
+
+.summary .chip.pq-ok {
+  background: #e6f7ec;
+  color: #1e7e34;
+  font-weight: 600;
+}
+
+.pq-infeasible {
+  color: #c92a2a;
+  font-weight: 600;
+}
+
+#pqTable tfoot td {
+  background: #f4f6fa;
+  font-weight: 600;
+  position: sticky;
+  bottom: 0;
+}
+
 .slot-fit {
   margin-top: 2px;
   font-size: 12px;

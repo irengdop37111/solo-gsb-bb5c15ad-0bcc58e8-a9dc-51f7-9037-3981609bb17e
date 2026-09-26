@@ -370,3 +370,147 @@ test('印刷备料：非法参数返回 400', async () => {
     await srv.close();
   }
 });
+
+const QUOTES = [
+  { supplier: '甲', sheetsPerPack: 500, pricePerPack: 120 },
+  { supplier: '乙', sheetsPerPack: 1000, pricePerPack: 230 },
+];
+
+test('采购报价组合：手工需求，响应含逐报价采购量 / 金额 / 余量与汇总', async () => {
+  const srv = await startServer();
+  try {
+    const res = await postJson(`${srv.baseUrl}/api/impose`, {
+      ...BASE,
+      purchaseQuotes: { demandSheets: 4500, quotes: QUOTES },
+    });
+    assert.equal(res.status, 200);
+    const pq = res.body.purchaseQuotes;
+    assert.equal(pq.enabled, true);
+    assert.equal(pq.demandSheets, 4500);
+    assert.equal(pq.demandSource, 'manual');
+    assert.equal(pq.feasible, true);
+    // 乙×4 + 甲×1 = 4500 张 / 1040 元（优于甲×9 = 1080 元）
+    assert.deepEqual(pq.quotes.map((x) => [x.supplier, x.packs]), [['甲', 1], ['乙', 4]]);
+    const t = pq.totals;
+    assert.equal(t.packCount, 5);
+    assert.equal(t.totalSheets, 4500);
+    assert.equal(t.overageSheets, 0);
+    assert.equal(t.supplierCount, 2);
+    assert.equal(t.totalCostCents, 104000); // 按分精确计算
+    // 逐报价：采购量、金额（分）与余量（maxPacks 缺省不限 → null）
+    pq.quotes.forEach((row, i) => {
+      assert.equal(row.index, i + 1);
+      assert.equal(row.sheets, row.packs * row.sheetsPerPack);
+      assert.equal(row.costCents, row.packs * row.pricePerPackCents);
+      assert.equal(row.remainingPacks, null);
+      assert.equal(row.remainingSheets, null);
+    });
+    assert.match(pq.message, /1040\.00 元/);
+  } finally {
+    await srv.close();
+  }
+});
+
+test('采购报价组合：需求缺省时接入印刷备料整包采购张数', async () => {
+  const srv = await startServer();
+  try {
+    const prep = { copies: 1000, makereadySheets: 10, processWasteRate: 0.03, sheetsPerPack: 500 };
+    const res = await postJson(`${srv.baseUrl}/api/impose`, {
+      ...BASE,
+      materialPrep: prep,
+      purchaseQuotes: { quotes: QUOTES },
+    });
+    assert.equal(res.status, 200);
+    const pq = res.body.purchaseQuotes;
+    assert.equal(pq.demandSource, 'materialPrep');
+    // BASE 8 页 2 张/帖 -> 1 帖：需领纸 2073，整包采购 5 包 × 500 = 2500 张
+    assert.equal(res.body.materialPrep.totals.purchaseSheets, 2500);
+    assert.equal(pq.demandSheets, 2500);
+    assert.equal(pq.feasible, true);
+    // 甲×5 = 2500 张 / 600 元；乙×3 = 3000 张 / 690 元；乙×2+甲×1 = 2500 张 / 580 元 ← 最优
+    assert.deepEqual(pq.quotes.map((x) => x.packs), [1, 2]);
+    assert.equal(pq.totals.totalCostCents, 58000);
+  } finally {
+    await srv.close();
+  }
+});
+
+test('采购报价组合：无可行组合返回 200 与具体缺口', async () => {
+  const srv = await startServer();
+  try {
+    const res = await postJson(`${srv.baseUrl}/api/impose`, {
+      ...BASE,
+      purchaseQuotes: {
+        demandSheets: 5000,
+        quotes: [{ supplier: '甲', sheetsPerPack: 500, pricePerPack: 100, maxPacks: 4 }],
+      },
+    });
+    assert.equal(res.status, 200);
+    const pq = res.body.purchaseQuotes;
+    assert.equal(pq.feasible, false);
+    assert.equal(pq.maxPurchasableSheets, 2000);
+    assert.equal(pq.gapSheets, 3000);
+    assert.match(pq.message, /无可行组合/);
+    assert.match(pq.message, /缺 3,000 张/);
+  } finally {
+    await srv.close();
+  }
+});
+
+test('采购报价组合：非法参数返回 400；未启用响应不含该字段', async () => {
+  const srv = await startServer();
+  try {
+    // 未填写需求且未启用印刷备料
+    const noDemand = await postJson(`${srv.baseUrl}/api/impose`, {
+      ...BASE,
+      purchaseQuotes: { quotes: QUOTES },
+    });
+    assert.equal(noDemand.status, 400);
+    assert.match(noDemand.body.error, /需求张数/);
+
+    // 最多可购包数小于最少可购包数
+    const badBounds = await postJson(`${srv.baseUrl}/api/impose`, {
+      ...BASE,
+      purchaseQuotes: {
+        demandSheets: 1000,
+        quotes: [{ supplier: '甲', sheetsPerPack: 500, pricePerPack: 100, minPacks: 5, maxPacks: 3 }],
+      },
+    });
+    assert.equal(badBounds.status, 400);
+    assert.match(badBounds.body.error, /不能小于最少可购包数/);
+
+    // 价格未精确到分（三位小数）
+    const badPrice = await postJson(`${srv.baseUrl}/api/impose`, {
+      ...BASE,
+      purchaseQuotes: {
+        demandSheets: 1000,
+        quotes: [{ supplier: '甲', sheetsPerPack: 500, pricePerPack: 10.555 }],
+      },
+    });
+    assert.equal(badPrice.status, 400);
+    assert.match(badPrice.body.error, /每包价格/);
+
+    // 重复供应商
+    const dupSupplier = await postJson(`${srv.baseUrl}/api/impose`, {
+      ...BASE,
+      purchaseQuotes: {
+        demandSheets: 1000,
+        quotes: [
+          { supplier: '甲', sheetsPerPack: 500, pricePerPack: 100 },
+          { supplier: '甲', sheetsPerPack: 600, pricePerPack: 110 },
+        ],
+      },
+    });
+    assert.equal(dupSupplier.status, 400);
+    assert.match(dupSupplier.body.error, /重复录入/);
+
+    // 未启用：响应不含 purchaseQuotes 字段（原响应不变）
+    const off = await postJson(`${srv.baseUrl}/api/impose`, BASE);
+    assert.equal(off.status, 200);
+    assert.equal('purchaseQuotes' in off.body, false);
+    const explicitOff = await postJson(`${srv.baseUrl}/api/impose`, { ...BASE, purchaseQuotes: false });
+    assert.equal('purchaseQuotes' in explicitOff.body, false);
+  } finally {
+    await srv.close();
+  }
+});

@@ -119,6 +119,30 @@
         <label for="prepSheetsPerPack">每包张数</label>
         <input id="prepSheetsPerPack" type="number" min="1" max="100000000" step="1" value="500" disabled>
       </div>
+      <div class="field checkbox-field">
+        <label for="purchaseQuotesEnabled">
+          <input id="purchaseQuotesEnabled" type="checkbox">
+          <span>采购报价组合（在多条本地报价间择优整包采购：总价最低 → 超购张数最少 → 供应商数量最少 → 录入顺序，价格按分精确计算）</span>
+        </label>
+      </div>
+      <div class="field">
+        <label for="pqDemand">需求张数（留空取印刷备料整包采购张数）</label>
+        <input id="pqDemand" type="number" min="1" max="500000" step="1" placeholder="如 4500" disabled>
+      </div>
+      <div class="field pq-editor" id="pqEditor" hidden>
+        <label>本地报价（每包价格精确到分；最少可购包数缺省 0，最多可购包数留空表示不限；最多 20 条）</label>
+        <div class="table-wrap pq-table-wrap">
+          <table id="pqEditTable">
+            <thead>
+              <tr><th>供应商</th><th>每包张数</th><th>每包价格（元）</th><th>最少可购包数</th><th>最多可购包数</th><th></th></tr>
+            </thead>
+            <tbody id="pqEditRows"></tbody>
+          </table>
+        </div>
+        <div class="field actions">
+          <button type="button" id="pqAddQuote" class="ghost">＋ 添加报价</button>
+        </div>
+      </div>
       <div class="field actions">
         <button type="submit">生成拼版</button>
       </div>
@@ -149,6 +173,14 @@
       各帖<strong>分别向上取整</strong>后再汇总（禁止先合并各帖再算损耗）；汇总后的需领纸合计按每包张数<strong>向上取整</strong>得到整包采购量。
       结果区逐帖展示净用纸、开机损耗、过程损耗与需领纸，并给出整包采购汇总；导出的拼版清单 JSON 在 <code>materialPrep</code> 段附带相同数据。
       不勾选时不进行任何备料计算，响应与之前完全一致。
+    </p>
+    <p class="hint">
+      采购报价组合（可选）：勾选后录入多条本地报价（供应商、每包张数、每包价格、最少 / 最多可购包数）。
+      需求张数默认取自印刷备料的<strong>整包采购张数</strong>（需同时勾选「印刷备料」），也可手工填写覆盖；
+      系统在满足需求与各报价边界的组合中，按「<strong>总价最低 → 超购张数最少 → 供应商数量最少 → 录入顺序</strong>」确定唯一方案，
+      价格按分精确计算（不做浮点比较）；无可行组合时显示具体缺口（最多可购张数与缺口张数）。
+      结果区逐报价展示采购包数、采购张数、金额与余量，导出的拼版清单 JSON 在 <code>purchaseQuotes</code> 段附带相同数据。
+      不勾选时不进行任何组合计算，响应与之前完全一致。
     </p>
     <p class="error" id="errorBox" hidden></p>
   </section>
@@ -237,6 +269,25 @@
             <tr>
               <th>帖</th><th>每帖实际张数</th><th>成品份数</th><th>净用纸（张）</th>
               <th>开机损耗（张）</th><th>过程损耗（张）</th><th>损耗合计（张）</th><th>需领纸（张）</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+          <tfoot></tfoot>
+        </table>
+      </div>
+    </section>
+
+    <section id="purchaseQuotesCard" class="prep-card" hidden>
+      <h2>采购报价组合</h2>
+      <p class="hint" id="pqFormula"></p>
+      <p class="hint" id="pqMessage"></p>
+      <div class="summary" id="pqSummary"></div>
+      <div class="table-wrap">
+        <table id="pqTable">
+          <thead>
+            <tr>
+              <th>#</th><th>供应商</th><th>每包张数</th><th>每包价格（元）</th><th>可购包数边界</th>
+              <th>采购包数</th><th>采购张数</th><th>金额（元）</th><th>余量</th>
             </tr>
           </thead>
           <tbody></tbody>

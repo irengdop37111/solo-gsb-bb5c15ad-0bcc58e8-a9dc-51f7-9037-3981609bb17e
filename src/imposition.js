@@ -4,6 +4,7 @@ const { parseFitInput, attachFit } = require('./fitCheck');
 const { parseProductionMarksInput, attachProductionMarks } = require('./productionMarks');
 const { attachVerification } = require('./verification');
 const { parseMaterialPrepInput, attachMaterialPrep } = require('./materialPrep');
+const { parsePurchaseQuotesInput, attachPurchaseQuotes } = require('./purchaseQuotes');
 
 /**
  * 骑马钉（saddle-stitch）拼版计算核心。
@@ -77,6 +78,17 @@ const { parseMaterialPrepInput, attachMaterialPrep } = require('./materialPrep')
  * - 逐帖返回净用纸 / 开机损耗 / 过程损耗（含取整余量）/ 需领纸，
  *   顶层 materialPrep.totals 给出汇总与整包采购（包数 / 采购张数 / 包余）。
  * - materialPrep 缺省 / null / false 时不启用，不写入任何备料字段，原响应完全不变。
+ *
+ * 采购报价组合（purchase quote combination）：
+ * - 可选提供 purchaseQuotes { demandSheets?, quotes: [{ supplier, sheetsPerPack,
+ *   pricePerPack, minPacks?, maxPacks? }] }；需求张数缺省时接入印刷备料的整包采购张数
+ *   （需同时启用 materialPrep），也可手工填写 demandSheets（手工值优先）。
+ * - 每条报价采购包数 p 满足 p = 0 或 minPacks ≤ p ≤ maxPacks（maxPacks 缺省不限）；
+ *   在满足需求与各报价边界的组合中按「总价最低 → 超购张数最少 → 供应商数量最少 →
+ *   录入顺序」确定唯一方案；价格按分精确计算，不做浮点比较。
+ * - 无可行组合时返回 feasible: false 与具体缺口（最多可购张数 / 缺口张数）；
+ *   逐报价返回采购包数 / 张数 / 金额（分）与余量（距最多可购包数的剩余）。
+ * - purchaseQuotes 缺省 / null / false 时不启用，不写入任何字段，原响应完全不变。
  */
 
 const MAX_TOTAL_PAGES = 10000;
@@ -246,10 +258,17 @@ function planChapterSignatures(totalPages, maxSheets, starts) {
  * @param {object|boolean} [input.materialPrep] 印刷备料参数（缺省 / null / false 不启用）：
  *   { copies 成品份数（≥1 整数）, makereadySheets 每帖开机损耗张数（≥0 整数）,
  *     processWasteRate 过程损耗率（0 ≤ r < 1，0.03 = 3%）, sheetsPerPack 每包张数（≥1 整数） }
+ * @param {object|boolean} [input.purchaseQuotes] 采购报价组合参数（缺省 / null / false 不启用）：
+ *   { demandSheets? 需求张数（≥1 整数，缺省接入印刷备料整包采购张数）,
+ *     quotes 本地报价数组（1~20 条）：{ supplier 供应商, sheetsPerPack 每包张数,
+ *     pricePerPack 每包价格（元，精确到分）, minPacks? 最少可购包数（缺省 0）,
+ *     maxPacks? 最多可购包数（缺省不限） } }
  * @returns {object} 拼版结果（按帖 -> 张 -> 正/背面 -> 左/右页位；启用适配检查时每个页位带 fit；
  *                   启用双面生产标记时每张纸带 productionMarks、顶层带 productionMarks 汇总；
  *                   启用试印核验时顶层带 verification：观察、候选评分与结论；
- *                   启用印刷备料时顶层带 materialPrep：逐帖净用纸 / 损耗 / 需领纸与整包采购汇总）
+ *                   启用印刷备料时顶层带 materialPrep：逐帖净用纸 / 损耗 / 需领纸与整包采购汇总；
+ *                   启用采购报价组合时顶层带 purchaseQuotes：逐报价采购量 / 金额 / 余量、
+ *                   汇总与可行结论，不可行时带具体缺口）
  */
 function computeImposition(input) {
   const totalPages = toInteger(input && input.totalPages);
@@ -263,6 +282,7 @@ function computeImposition(input) {
   const fit = parseFitInput(input || {});
   const productionMarks = parseProductionMarksInput(input || {}, fit.enabled);
   const materialPrep = parseMaterialPrepInput(input || {});
+  const purchaseQuotes = parsePurchaseQuotesInput(input || {});
 
   if (!Number.isInteger(totalPages) || totalPages < 1 || totalPages > MAX_TOTAL_PAGES) {
     throw new Error(`成品页数必须为 1 ~ ${MAX_TOTAL_PAGES} 的整数`);
@@ -472,7 +492,7 @@ function computeImposition(input) {
   const result = {
     meta: {
       app: 'saddle-stitch-imposition',
-      version: '1.8.0',
+      version: '1.9.0',
       generatedAt: new Date().toISOString(),
     },
     input: {
@@ -542,6 +562,14 @@ function computeImposition(input) {
   const materialPrepResult = attachMaterialPrep(result, materialPrep);
   if (materialPrepResult) {
     result.materialPrep = materialPrepResult;
+  }
+
+  // 采购报价组合：purchaseQuotes 缺省 / null / false 时不写入任何字段，原响应完全不变；
+  // 需求张数缺省时接入印刷备料的整包采购张数（手工填写的 demandSheets 优先），
+  // 按「总价最低 → 超购张数最少 → 供应商数量最少 → 录入顺序」确定唯一方案（按分精确计算）。
+  const purchaseQuotesResult = attachPurchaseQuotes(purchaseQuotes, materialPrepResult);
+  if (purchaseQuotesResult) {
+    result.purchaseQuotes = purchaseQuotesResult;
   }
   return result;
 }

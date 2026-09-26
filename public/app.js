@@ -39,6 +39,18 @@ const prepSummary = document.getElementById('prepSummary');
 const prepFormula = document.getElementById('prepFormula');
 const prepTableBody = document.querySelector('#prepTable tbody');
 const prepTableFoot = document.querySelector('#prepTable tfoot');
+const purchaseQuotesBox = document.getElementById('purchaseQuotesEnabled');
+const pqDemandInput = document.getElementById('pqDemand');
+const pqEditor = document.getElementById('pqEditor');
+const pqEditRows = document.getElementById('pqEditRows');
+const pqAddQuoteBtn = document.getElementById('pqAddQuote');
+const purchaseQuotesCard = document.getElementById('purchaseQuotesCard');
+const pqFormula = document.getElementById('pqFormula');
+const pqMessage = document.getElementById('pqMessage');
+const pqSummary = document.getElementById('pqSummary');
+const pqTableBody = document.querySelector('#pqTable tbody');
+const pqTableFoot = document.querySelector('#pqTable tfoot');
+const MAX_QUOTES = 20;
 const obsForm = document.getElementById('obsForm');
 const obsSignature = document.getElementById('obsSignature');
 const obsSheet = document.getElementById('obsSheet');
@@ -85,6 +97,63 @@ materialPrepBox.addEventListener('change', () => {
 [prepCopiesInput, prepMakereadyInput, prepWasteRateInput, prepSheetsPerPackInput].forEach((el) => {
   el.disabled = true;
 });
+
+/* 采购报价组合：勾选后展开报价编辑器并允许填写需求张数 */
+purchaseQuotesBox.addEventListener('change', () => {
+  pqDemandInput.disabled = !purchaseQuotesBox.checked;
+  pqEditor.hidden = !purchaseQuotesBox.checked;
+  if (purchaseQuotesBox.checked) {
+    if (pqEditRows.children.length === 0) addQuoteRow();
+    const first = pqEditRows.querySelector('.pq-supplier');
+    if (first) first.focus();
+  }
+});
+pqDemandInput.disabled = true;
+
+/** 添加一条本地报价录入行（最多 MAX_QUOTES 条）。 */
+function addQuoteRow() {
+  if (pqEditRows.children.length >= MAX_QUOTES) return;
+  const tr = document.createElement('tr');
+  const cells = [
+    '<input class="pq-supplier" type="text" maxlength="50" placeholder="供应商">',
+    '<input class="pq-sheets" type="number" min="1" max="500000" step="1" placeholder="如 500">',
+    '<input class="pq-price" type="text" inputmode="decimal" placeholder="如 120.50">',
+    '<input class="pq-min" type="number" min="0" max="100000" step="1" placeholder="0">',
+    '<input class="pq-max" type="number" min="1" max="100000" step="1" placeholder="不限">',
+  ];
+  cells.forEach((html) => {
+    const td = document.createElement('td');
+    td.innerHTML = html;
+    tr.appendChild(td);
+  });
+  const tdDel = document.createElement('td');
+  const del = document.createElement('button');
+  del.type = 'button';
+  del.className = 'ghost small-btn';
+  del.textContent = '删除';
+  del.addEventListener('click', () => tr.remove());
+  tdDel.appendChild(del);
+  tr.appendChild(tdDel);
+  pqEditRows.appendChild(tr);
+}
+
+pqAddQuoteBtn.addEventListener('click', () => addQuoteRow());
+
+/** 收集本地报价录入行（每包价格按字符串原样上送，由服务端精确解析到分）。 */
+function collectQuotes() {
+  return [...pqEditRows.querySelectorAll('tr')].map((tr) => {
+    const val = (sel) => tr.querySelector(sel).value.trim();
+    const min = val('.pq-min');
+    const max = val('.pq-max');
+    return {
+      supplier: val('.pq-supplier'),
+      sheetsPerPack: Number(val('.pq-sheets')),
+      pricePerPack: val('.pq-price'),
+      minPacks: min !== '' ? Number(min) : undefined,
+      maxPacks: max !== '' ? Number(max) : undefined,
+    };
+  });
+}
 
 /** 解析章节起始页输入：支持逗号 / 顿号 / 分号 / 空白分隔；无法解析的 token 原样上送，由服务端给出明确错误。 */
 function parseChapterStarts(raw) {
@@ -163,6 +232,13 @@ form.addEventListener('submit', async (event) => {
           sheetsPerPack: Number(prepSheetsPerPackInput.value),
         }
       : undefined,
+    // 采购报价组合：仅勾选时上送；需求张数留空则由服务端接入印刷备料整包采购张数
+    purchaseQuotes: purchaseQuotesBox.checked
+      ? {
+          demandSheets: pqDemandInput.value.trim() !== '' ? Number(pqDemandInput.value) : undefined,
+          quotes: collectQuotes(),
+        }
+      : undefined,
   };
   // 已录入观察时随生成一并核验；无观察时请求体与原流程完全一致
   const requestBody = state.observations.length ? { ...payload, observations: observationPayload() } : payload;
@@ -234,6 +310,7 @@ function renderAll() {
   renderSheetNav();
   renderTable();
   renderMaterialPrep();
+  renderPurchaseQuotes();
   jsonPreview.textContent = JSON.stringify(state.result, null, 2);
   renderObsPanel();
   draw();
@@ -326,6 +403,16 @@ function renderSummary() {
       text: `印刷备料：${formatSheets(t.requiredSheets)} 张 → 整包采购 ${formatSheets(t.purchasePacks)} 包（${formatSheets(t.purchaseSheets)} 张）`,
       cls: 'prep-buy',
     });
+  }
+  if (r.purchaseQuotes && r.purchaseQuotes.enabled) {
+    chips.push(
+      r.purchaseQuotes.feasible
+        ? {
+            text: `采购报价：总价 ${formatYuan(r.purchaseQuotes.totals.totalCostCents)} 元 · 超购 ${formatSheets(r.purchaseQuotes.totals.overageSheets)} 张 · ${r.purchaseQuotes.totals.supplierCount} 家供应商`,
+            cls: 'pq-ok',
+          }
+        : { text: `采购报价：无可行组合（缺口 ${formatSheets(r.purchaseQuotes.gapSheets)} 张）`, cls: 'fit-fail' }
+    );
   }
   summaryBox.innerHTML = '';
   chips.forEach(({ text, cls }) => {
@@ -553,6 +640,90 @@ function renderMaterialPrep() {
     footTr.appendChild(td);
   });
   prepTableFoot.appendChild(footTr);
+}
+
+/* ------------------------------ 采购报价组合 ------------------------------ */
+
+/** 整数分格式化为元（不经过浮点）：12345 -> "123.45"。 */
+function formatYuan(cents) {
+  return `${Math.floor(cents / 100)}.${String(cents % 100).padStart(2, '0')}`;
+}
+
+/** 渲染采购报价组合：规则说明、汇总 chips 与逐报价明细表；未启用时隐藏整个区块。 */
+function renderPurchaseQuotes() {
+  const pq = state.result.purchaseQuotes;
+  if (!pq || !pq.enabled) {
+    purchaseQuotesCard.hidden = true;
+    return;
+  }
+  purchaseQuotesCard.hidden = false;
+  pqFormula.textContent =
+    `需求 ${formatSheets(pq.demandSheets)} 张（${pq.demandSource === 'materialPrep' ? '取自印刷备料整包采购张数' : '手工填写'}）；` +
+    '在满足需求与各报价「最少 / 最多可购包数」边界的组合中，按「总价最低 → 超购张数最少 → 供应商数量最少 → 录入顺序」确定唯一方案，价格按分精确计算。';
+  pqMessage.textContent = pq.message;
+  pqMessage.className = pq.feasible ? 'hint' : 'hint pq-infeasible';
+
+  const chips = [];
+  if (pq.feasible) {
+    const t = pq.totals;
+    chips.push(
+      { text: `总价 ${formatYuan(t.totalCostCents)} 元`, cls: 'prep-buy' },
+      { text: `共 ${formatSheets(t.packCount)} 包 / ${formatSheets(t.totalSheets)} 张`, cls: 'prep-total' },
+      { text: t.overageSheets > 0 ? `超购 ${formatSheets(t.overageSheets)} 张` : '无超购', cls: t.overageSheets > 0 ? 'prep-warn' : 'prep-ok' },
+      { text: `供应商 ${t.supplierCount} 家`, cls: 'prep' },
+    );
+  } else {
+    chips.push(
+      { text: '无可行组合', cls: 'fit-fail' },
+      { text: `全部报价最多可购 ${formatSheets(pq.maxPurchasableSheets)} 张`, cls: 'prep-warn' },
+      { text: `缺口 ${formatSheets(pq.gapSheets)} 张`, cls: 'fit-fail' },
+    );
+  }
+  pqSummary.innerHTML = '';
+  chips.forEach(({ text, cls }) => {
+    const span = document.createElement('span');
+    span.className = 'chip' + (cls ? ` ${cls}` : '');
+    span.textContent = text;
+    pqSummary.appendChild(span);
+  });
+
+  pqTableBody.innerHTML = '';
+  pq.quotes.forEach((q) => {
+    const tr = document.createElement('tr');
+    const bounds = `${formatSheets(q.minPacks)} ~ ${q.maxPacks === null ? '不限' : formatSheets(q.maxPacks)}`;
+    const remaining = q.maxPacks === null
+      ? '不限'
+      : `剩 ${formatSheets(q.remainingPacks)} 包 / ${formatSheets(q.remainingSheets)} 张`;
+    [
+      String(q.index),
+      q.supplier,
+      formatSheets(q.sheetsPerPack),
+      formatYuan(q.pricePerPackCents),
+      bounds,
+      pq.feasible ? formatSheets(q.packs) : '—',
+      pq.feasible ? formatSheets(q.sheets) : '—',
+      pq.feasible ? formatYuan(q.costCents) : '—',
+      remaining,
+    ].forEach((text) => {
+      const td = document.createElement('td');
+      td.textContent = text;
+      tr.appendChild(td);
+    });
+    pqTableBody.appendChild(tr);
+  });
+
+  pqTableFoot.innerHTML = '';
+  if (pq.feasible) {
+    const t = pq.totals;
+    const footTr = document.createElement('tr');
+    ['合计', '—', '—', '—', '—', formatSheets(t.packCount), formatSheets(t.totalSheets), formatYuan(t.totalCostCents), `超购 ${formatSheets(t.overageSheets)} 张`]
+      .forEach((text) => {
+        const td = document.createElement('td');
+        td.textContent = text;
+        footTr.appendChild(td);
+      });
+    pqTableFoot.appendChild(footTr);
+  }
 }
 
 /* ------------------------------ 试印核验 ------------------------------ */
